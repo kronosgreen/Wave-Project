@@ -1,0 +1,51 @@
+import numpy as np
+from numpy import random
+from scipy import misc
+from matplotlib import pyplot as plt
+import cv2 as cv
+
+# Get Test Video
+cap = cv.VideoCapture('wave.mp4')
+
+# Create some random colors
+color = np.random.randint(0,255,(100,3))
+
+# Grab First Frame w/ Grayscale Vers.
+ret, old_frame = cap.read()
+old_gray = cv.cvtColor(old_frame, cv.COLOR_BGR2GRAY)
+
+
+# Create a mask image for drawing purposes
+mask = np.zeros_like(old_frame)
+mask[...,1] = 255
+
+while True:
+    # Get Current Frame & Grayscale Vers.
+    ret, frame = cap.read()
+    gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+
+    # Calculate Optical Flow
+    flow = cv.calcOpticalFlowFarneback(old_gray, gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+
+    mag, ang = cv.cartToPolar(flow[..., 0], flow[..., 1])
+    mask[..., 0] = ang * 180 / np.pi / 2
+    mask[..., 2] = cv.normalize(mag, None, 0, 255, cv.NORM_MINMAX)
+    bgr = cv.cvtColor(mask, cv.COLOR_HSV2BGR)
+
+    img = cv.add(frame,mask)
+
+    # Threshold image to only show whites
+    ret, thresh = cv.threshold(gray, 230, 255, cv.THRESH_BINARY)
+
+    # Show Versions of Frame
+    cv.imshow("original", img)
+    cv.imshow("thresholded", thresh)
+
+    if cv.waitKey(1) & 0xFF == ord('q'):
+        break
+
+    old_frame = frame.copy()
+    old_gray = gray.copy()
+
+cap.release()
+cv.destroyAllWindows()
