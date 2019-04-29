@@ -32,6 +32,7 @@ frame_num = 1
 tracked_waves = []
 recognized_waves = []
 period = []
+stable_wavelength = 0
 
 while True:
     # Get Current Frame & Grayscale Vers.
@@ -84,7 +85,7 @@ while True:
     wave_slopes = []
     for wave in tracked_waves:
         wave.update_searchroi_coors()
-        wave.update_points(analyze_frame)
+        analyze_frame = wave.update_points(analyze_frame, 1/0.25)
         if wave.update_death(frame_rate, frame_num):
             print("Wave Traveled " + str(wave.travel_dist) +
                   "m in " + str(wave.time_alive) + "s")
@@ -96,8 +97,10 @@ while True:
         wave.update_displacement()
         wave.update_mass()
         wave.update_recognized()
+        # Update Data Structures
+        #frame = mwt.draw_line(frame, wave.slope, wave.intercept,  1 / 0.25)
         wave_points.append(wave.centroid)
-        wave_slopes.append(wave.birth_slope)
+        wave_slopes.append(wave.slope)
 
     dead_recognized_waves = [wave for wave in tracked_waves
                              if wave.death is not None
@@ -124,26 +127,32 @@ while True:
             tracked_waves.append(section)
 
     # Draw detection boxes on original frame for visualization.
-    frame = mwt.draw(tracked_waves,
-                          frame
-                          , 1 / 0.25)
+    frame = mwt.draw(tracked_waves, frame, 1 / 0.25)
 
     #
     # Show Updated Frames
     #
 
+    # Calculate Wavelength (avg)
+    avg_slope = np.mean(wave_slopes)
+    wavelengths = [mwt.calc_dist_lines(j, i, avg_slope) for i, j in zip(wave_points[:-1], wave_points[1:])]
+    avg_wavelength = np.round(np.mean(wavelengths), 2)
+    if np.isnan(avg_wavelength) or avg_wavelength == 0:
+        avg_wavelength = stable_wavelength
+    else:
+        stable_wavelength = avg_wavelength
+
+    # Calculate Period
     # Get diff. between each wave reaching point
     if len(period) > 1:
-        avg_slope = np.mean(wave_slopes)
-        wavelengths = [mwt.calc_dist_lines(j, i, avg_slope) for i, j in zip(wave_points[:-1], wave_points[1:])]
-        avg_wavelength = np.round(np.mean(wavelengths), 2)
         periods = [(j-i)/frame_rate for i, j in zip(period[:-1], period[1:])]
         avg_period = np.round(np.mean(periods), 2)
         temp_freq = np.round(1/avg_period, 2)
         main_stats = "Stats\nWavelength: {}m\nPeriod: {}s\nTemporal Frequency: {} wave/s"\
             .format(np.round(avg_wavelength,2), avg_period, temp_freq)
     else:
-        main_stats = "Stats\nWavelength: n/a\nPeriod: n/a\nTemporal Frequency: n/a"
+        main_stats = "Stats\nWavelength: {}m\nPeriod: n/a\nTemporal Frequency: n/a"\
+            .format(avg_wavelength)
     for i, j in enumerate(main_stats.split('\n')):
         frame = cv.putText(
                     frame,
@@ -154,6 +163,9 @@ while True:
                     color=(200, 200, 200),
                     thickness=2,
                     lineType=cv.LINE_AA)
+
+    # Show Test Point used for Period
+    frame = cv.circle(frame, (1040, 600), 4, (0,0,0), thickness=4)
 
     cv.imshow("original", frame)
     cv.imshow("thresholded", analyze_frame)

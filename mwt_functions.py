@@ -6,6 +6,7 @@ import math
 from collections import deque
 from numpy import random
 from scipy import misc
+from scipy.stats import linregress
 from matplotlib import pyplot as plt
 import cv2 as cv
 
@@ -15,19 +16,6 @@ import cv2 as cv
 #   Christopher Medrano & Igor Mirsalikhov
 #   Date: 4/29/19
 #
-
-# Get slope of wave line
-def calc_slope(points):
-    x_vals = points[:,0][0]
-    y_vals = points[:,0][1]
-    sumxy = np.sum([x * y for (x, y) in zip(x_vals,y_vals)])
-    sumx = np.sum(x_vals)
-    sumy = np.sum(y_vals)
-    sumxsq = np.sum([x * x for x in x_vals])
-
-    slope = (len(points) * sumxy - sumx * sumy) / (len(points) * sumxsq - sumx * sumx)
-
-    return slope
 
 
 # Used to get Wave Length
@@ -47,26 +35,36 @@ def calc_dist_lines(p1, p2, slope):
     inter_x = (line_2_B - pB) / (perp_slope - slope)
     inter_y = perp_slope * inter_x + pB
     # Calculate Distance
-    return np.sqrt((p1[1] - inter_y) ** 2 + (p1[0] - inter_x) ** 2) * 0.468
+    return np.sqrt((p1[1] - inter_y) ** 2 + (p1[0] - inter_x) ** 2) * 1.25
 
 
 # Check if wave has passed point
 # Used to calculate Period
-def test_passed_point(p, m, test_p):
-    # calculate offset for slope eq. y = mx + b
-    b = p[1] - m * p[0]
+def test_passed_point(m, b, test_p):
     # See if test point is above current wave line
-    if test_p[1] > m * test_p[0] + b:
+    if test_p[1] < m * test_p[0] + b:
         return True
     else:
         return False
+
+
+def draw_line(frame, m, b, resize_factor):
+    if not (isinstance(m, float) or isinstance(b, float)):
+        return frame
+    p1 = (0, int(resize_factor*np.round(m*0 + b)))
+    p2 = (int(np.round(resize_factor*300)), int(np.round(resize_factor*(m*300 + b))) )
+
+    frame = cv.line(frame, p1, p2, color=(0, 255, 0), thickness=5)
+
+    return frame
+
 
 class Section(object):
     def __init__(self, points, birth):
         self.points = points
         self.birth = birth
-        self.birth_slope = calc_slope(self.points)
-        self.vertical_offset = 0
+        self.slope = np.nan
+        self.intercept = 0
         self.moving_speed = 0
         self.time_alive = 0
         self.travel_dist = 0
@@ -93,6 +91,22 @@ class Section(object):
         self.recognized = False
         self.death = None
 
+        # Calculate Slope/Intercept
+        self.calc_slope(self.points)
+
+    # Get slope of wave line
+    def calc_slope(self, points):
+        #X = resize_factor * np.array(points[:, 0][0])
+        #Y = resize_factor * np.array(points[:, 0][1])
+
+        #slope, intercept, r_value, p_value, std_err = linregress(X, Y)
+        p1 = points[0,0]
+        p2 = points[len(points)-1,0]
+
+        if np.isnan(self.slope) or -0.1 < self.slope < 0.1:
+            self.slope = (p2[1] - p1[1]) / (p2[0] - p1[0])
+        self.intercept = p2[1] - p2[0] * self.slope
+
     def update_searchroi_coors(self):
         self.searchroi_coors = _get_searchroi_coors(self.centroid,
                                                     self.axis_angle,                                           15,
@@ -102,12 +116,12 @@ class Section(object):
         self.time_alive = np.round((frame_number - self.birth) / fps, 2)
         if self.points is None:
             self.death = frame_number
-            self.travel_dist = np.round(calc_dist_lines(self.centroid_at_birth, self.centroid, self.birth_slope),2)
+            self.travel_dist = np.round(calc_dist_lines(self.centroid_at_birth, self.centroid, self.slope),2)
             return True
         else:
             return False
 
-    def update_points(self, frame):
+    def update_points(self, frame, resize_factor):
         # make a polygon object of the wave's search region
         rect = self.searchroi_coors
         poly = np.array([rect], dtype=np.int32)
@@ -128,6 +142,11 @@ class Section(object):
         # update points
         self.points = points
 
+        if points is not None:
+            self.calc_slope(self.points)
+
+        return frame
+
     def update_centroid(self, fps):
         """Calculates the center of mass of all positive pixels that
         represent the wave, using first-order moments.
@@ -146,12 +165,12 @@ class Section(object):
         self.centroid_vec.append(self.centroid)
 
         # Update Current Speed
-        speed = np.round(calc_dist_lines(old_centroid, self.centroid, self.birth_slope) * fps, 2)
+        speed = np.round(calc_dist_lines(old_centroid, self.centroid, self.slope) * fps, 2)
         # Remove erroneous calculations
-        if 1 < speed < 15:
+        if 1 < speed < 10:
             self.moving_speed = speed
 
-        if not self.passed_point and test_passed_point(self.centroid, self.birth_slope, (260, 150)):
+        if not self.passed_point and test_passed_point(self.slope, self.intercept, (260, 150)):
             self.passed_point = True
             return True
         else:
